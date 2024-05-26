@@ -136,7 +136,7 @@ resource "aws_eip" "one" {
 
 # Create Ubuntu server and install/enable apache2
 resource "aws_instance" "earnest-ec2-instance-test" {
-  ami           = "ami-0cc9838aa7ab1dce7"  # Replace with your desired AMI ID
+  ami           = "ami-0cc9838aa7ab1dce7"
   instance_type = "t2.micro"
   
   network_interface {
