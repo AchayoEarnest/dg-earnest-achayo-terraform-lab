@@ -31,20 +31,57 @@ resource "aws_vpc" "earnest-vpc" {
   }
 }
 
+# Create IGW
+resource "aws_internet_gateway" "gw" {
+  vpc_id = aws_vpc.earnest-vpc.id
+}
+
+# Create Egress-only Internet Gateway
+resource "aws_egress_only_internet_gateway" "eigw" {
+  vpc_id = aws_vpc.earnest-vpc.id
+}
+
+# Create a custom route table
+resource "aws_route_table" "dev-route-table" {
+  vpc_id = aws_vpc.earnest-vpc.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.gw.id
+  }
+
+  route {
+    ipv6_cidr_block        = "::/0"
+    egress_only_gateway_id = aws_egress_only_internet_gateway.eigw.id
+  }
+
+  tags = {
+    Name = "Dev"
+  }
+}
+
 # Subnet
 resource "aws_subnet" "subnet-earnest" {
-  vpc_id     = aws_vpc.earnest-vpc.id
-  cidr_block = "10.0.1.0/24"
+  vpc_id            = aws_vpc.earnest-vpc.id
+  cidr_block        = "10.0.1.0/24"
+  availability_zone = "ap-south-1a"
 
   tags = {
     Name = "dev-subnet"
   }
 }
 
+# AWS route table association
+resource "aws_route_table_association" "a" {
+  subnet_id      = aws_subnet.subnet-earnest.id
+  route_table_id = aws_route_table.dev-route-table.id
+}
+
+# Create a security group
 resource "aws_security_group" "dg-earnest" {
-  name_prefix = "earnest-achayo"
-  description = "Example security group"
-  vpc_id      = aws_vpc.earnest-vpc.id
+  name_prefix  = "earnest-achayo"
+  description  = "Example security group"
+  vpc_id       = aws_vpc.earnest-vpc.id
 
   ingress {
     description = "SSH"
@@ -54,22 +91,22 @@ resource "aws_security_group" "dg-earnest" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # egress {
-  #   from_port   = 0
-  #   to_port     = 0
-  #   protocol    = "-1"
-  #   cidr_blocks = ["0.0.0.0/0"]
-  # }
-  
-   ingress {
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
     description = "HTTP"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
-  
-   ingress {
+
+  ingress {
     description = "HTTPS"
     from_port   = 443
     to_port     = 443
@@ -78,18 +115,44 @@ resource "aws_security_group" "dg-earnest" {
   }
 
   tags = {
-    Name = "earnest-security-group"
+    Name = "allow-web"
   }
 }
 
-# Create an EC2 instance
+# Terraform AWS network interface
+resource "aws_network_interface" "web-server-nic" {
+  subnet_id       = aws_subnet.subnet-earnest.id
+  private_ips     = ["10.0.1.50"]
+  security_groups = [aws_security_group.dg-earnest.id]
+}
+
+# Assign EIP to the NIC
+resource "aws_eip" "one" {
+  domain                    = "vpc"
+  network_interface         = aws_network_interface.web-server-nic.id
+  associate_with_private_ip = "10.0.1.50"
+  depends_on                = [aws_internet_gateway.gw]
+}
+
+# Create Ubuntu server and install/enable apache2
 resource "aws_instance" "earnest-ec2-instance-test" {
-  ami                    = "ami-0cc9838aa7ab1dce7"  # Replace with your desired AMI ID
-  instance_type          = "t2.micro"
-  subnet_id              = aws_subnet.subnet-earnest.id
-  vpc_security_group_ids = [aws_security_group.dg-earnest.id]
+  ami           = "ami-0cc9838aa7ab1dce7"  # Replace with your desired AMI ID
+  instance_type = "t2.micro"
+  
+  network_interface {
+    device_index         = 0
+    network_interface_id = aws_network_interface.web-server-nic.id
+  }
+
+  user_data = <<-EOF
+              #!/bin/bash
+              sudo apt update -y
+              sudo apt install apache2 -y
+              sudo systemctl start apache2
+              sudo bash -c 'echo Your server is up and running > /var/www/html/index.html'
+              EOF
 
   tags = {
-    Name = "dg-earnest-terra-test"
+    Name = "earnest-web-server"
   }
 }
